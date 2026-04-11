@@ -8,11 +8,12 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 
-COPY indexer/ ./indexer/
+COPY index.js ./
+COPY schema.sql ./
 
 RUN mkdir -p /data
 
 ENV INDEXER_DB_PATH=/data/khord.db
 ENV FIREHOSE_RELAY=wss://bsky.network
 
-CMD ["node", "indexer/index.js"]
+CMD ["node", "index.js"]

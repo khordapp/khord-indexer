@@ -1,0 +1,14 @@
+{
+  "name": "khord-indexer",
+  "version": "1.0.0",
+  "description": "AT Protocol firehose indexer for Khord",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@atproto/sync": "0.1.40",
+    "better-sqlite3": "^12.8.0"
+  }
+}
