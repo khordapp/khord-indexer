@@ -28,6 +28,7 @@ db.exec(schema);
 
 // Migrations — ALTER TABLE ignores errors for columns that already exist
 try { db.exec(`ALTER TABLE songs ADD COLUMN instance_url TEXT`); } catch { /* already exists */ }
+try { db.exec(`ALTER TABLE songs ADD COLUMN listed INTEGER NOT NULL DEFAULT 1`); } catch { /* already exists */ }
 
 // ── Prepared statements ───────────────────────────────────────────────────────
 

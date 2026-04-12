@@ -42,7 +42,7 @@ Dockerfile  # Node 22 alpine; installs python3/make/g++ for better-sqlite3 nativ
 
 - `better-sqlite3` (synchronous) used deliberately — firehose events are processed one at a time; async SQLite would add complexity with no benefit here
 - Schema applied via `db.exec(schema.sql)` at startup — all `CREATE TABLE IF NOT EXISTS`, so safe to run against an existing DB
-- Inline migration for `instance_url` column (ALTER TABLE wrapped in try/catch) handles upgrading existing DBs without a migration framework
+- Inline migrations for `instance_url` and `listed` columns (ALTER TABLE wrapped in try/catch) handle upgrading existing DBs without a migration framework
 - Cursor persisted after every event so a crash loses at most one record, not the entire backlog
 - `excludeIdentity`, `excludeAccount`, `excludeSync` flags on the Firehose client — only commit events reach `handleEvent`
 - Graceful shutdown on `SIGTERM`: destroys firehose connection, closes DB, exits 0
