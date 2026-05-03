@@ -26,9 +26,59 @@ db.pragma('foreign_keys = ON');
 const schema = readFileSync(join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
 
-// Migrations — ALTER TABLE ignores errors for columns that already exist
-try { db.exec(`ALTER TABLE songs ADD COLUMN instance_url TEXT`); } catch { /* already exists */ }
-try { db.exec(`ALTER TABLE songs ADD COLUMN listed INTEGER NOT NULL DEFAULT 1`); } catch { /* already exists */ }
+// Schema sync — adds any columns present in schema.sql but missing from the live DB.
+// Extend each array when new columns are added; no manual migration lines needed.
+(function syncSchema() {
+  const sync = (table, columns) => {
+    const existing = new Set(
+      db.prepare(`PRAGMA table_info(${table})`).all().map(r => r.name)
+    );
+    for (const [name, def] of columns) {
+      if (!existing.has(name)) {
+        console.log(`[migrate] Adding column ${table}.${name}`);
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`);
+      }
+    }
+  };
+
+  sync('songs', [
+    ['album',               'TEXT'],
+    ['isrc',                'TEXT'],
+    ['odesli_key',          'TEXT'],
+    ['spotify_url',         'TEXT'],
+    ['apple_music_url',     'TEXT'],
+    ['youtube_music_url',   'TEXT'],
+    ['tidal_url',           'TEXT'],
+    ['deezer_url',          'TEXT'],
+    ['amazon_music_url',    'TEXT'],
+    ['soundcloud_url',      'TEXT'],
+    ['songlink_url',        'TEXT'],
+    ['note',                'TEXT'],
+    ['listed',              'INTEGER NOT NULL DEFAULT 1'],
+    ['instance_url',        'TEXT'],
+    ['thumbnail_url',       'TEXT'],
+  ]);
+
+  sync('proposals', [
+    ['album',               'TEXT'],
+    ['thumbnail_url',       'TEXT'],
+    ['spotify_url',         'TEXT'],
+    ['apple_music_url',     'TEXT'],
+    ['youtube_music_url',   'TEXT'],
+    ['tidal_url',           'TEXT'],
+    ['deezer_url',          'TEXT'],
+    ['amazon_music_url',    'TEXT'],
+    ['soundcloud_url',      'TEXT'],
+    ['songlink_url',        'TEXT'],
+    ['note',                'TEXT'],
+  ]);
+
+  sync('actors', [
+    ['handle',              'TEXT'],
+    ['display_name',        'TEXT'],
+    ['avatar',              'TEXT'],
+  ]);
+})();
 
 // ── Prepared statements ───────────────────────────────────────────────────────
 
