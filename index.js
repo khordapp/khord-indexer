@@ -90,11 +90,13 @@ const upsertActor = db.prepare(`
 const upsertSong = db.prepare(`
   INSERT INTO songs(
     uri, cid, actor_did, title, artist, album, isrc, odesli_key,
+    thumbnail_url,
     spotify_url, apple_music_url, youtube_music_url, tidal_url,
     deezer_url, amazon_music_url, soundcloud_url, songlink_url,
     note, listed, instance_url, created_at
   ) VALUES(
     @uri, @cid, @actor_did, @title, @artist, @album, @isrc, @odesli_key,
+    @thumbnail_url,
     @spotify_url, @apple_music_url, @youtube_music_url, @tidal_url,
     @deezer_url, @amazon_music_url, @soundcloud_url, @songlink_url,
     @note, @listed, @instance_url, @created_at
@@ -104,6 +106,7 @@ const upsertSong = db.prepare(`
     title           = excluded.title,
     artist          = excluded.artist,
     album           = excluded.album,
+    thumbnail_url   = excluded.thumbnail_url,
     spotify_url     = excluded.spotify_url,
     apple_music_url = excluded.apple_music_url,
     songlink_url    = excluded.songlink_url,
@@ -176,11 +179,12 @@ function handleEvent(evt) {
         deezer_url:        r.deezerUrl    ?? null,
         amazon_music_url:  r.amazonMusicUrl ?? null,
         soundcloud_url:    r.soundcloudUrl ?? null,
-        songlink_url:      r.songlinkUrl  ?? null,
-        note:              r.note         ?? null,
+        songlink_url:      r.songlinkUrl   ?? null,
+        thumbnail_url:     r.thumbnailUrl  ?? null,
+        note:              r.note          ?? null,
         listed:            r.listed === false ? 0 : 1,
-        instance_url:      r.instanceUrl  ?? null,
-        created_at:        r.createdAt    ?? new Date().toISOString(),
+        instance_url:      r.instanceUrl   ?? null,
+        created_at:        r.createdAt     ?? new Date().toISOString(),
       });
     } else if (action === 'delete') {
       deleteSong.run({ uri });
@@ -241,6 +245,101 @@ function handleEvent(evt) {
   if (seq != null) setCursor.run({ seq });
 }
 
+// ── PDS backfill ──────────────────────────────────────────────────────────────
+// On startup, fetch up to 50 recent songs from the PDS of any registered user
+// who has zero songs in the DB. Covers historical data outside the firehose
+// retention window. No-op on subsequent startups once users are indexed.
+
+const BACKFILL_LIMIT = 50;
+const BACKFILL_DELAY = 200; // ms between users
+
+async function resolvePds(did) {
+  try {
+    if (did.startsWith('did:plc:')) {
+      const res = await fetch(`https://plc.directory/${did}`);
+      if (!res.ok) return null;
+      const doc = await res.json();
+      const svc = doc.service?.find(s => s.type === 'AtprotoPersonalDataServer');
+      return svc?.serviceEndpoint ?? null;
+    }
+    if (did.startsWith('did:web:')) {
+      const domain = did.slice('did:web:'.length);
+      const res = await fetch(`https://${domain}/.well-known/did.json`);
+      if (!res.ok) return null;
+      const doc = await res.json();
+      const svc = doc.service?.find(s => s.type === 'AtprotoPersonalDataServer');
+      return svc?.serviceEndpoint ?? null;
+    }
+  } catch { /* unreachable PDS — skip */ }
+  return null;
+}
+
+async function backfillUser(did) {
+  const pds = await resolvePds(did);
+  if (!pds) return 0;
+
+  const url = `${pds}/xrpc/com.atproto.repo.listRecords?repo=${encodeURIComponent(did)}&collection=app.khord.song&limit=${BACKFILL_LIMIT}`;
+  const res = await fetch(url);
+  if (!res.ok) return 0;
+
+  const { records } = await res.json();
+  if (!records?.length) return 0;
+
+  let count = 0;
+  for (const rec of records) {
+    const r = rec.value;
+    upsertActor.run({ did });
+    upsertSong.run({
+      uri:               rec.uri,
+      cid:               rec.cid,
+      actor_did:         did,
+      title:             r.title           ?? '',
+      artist:            r.artist          ?? '',
+      album:             r.album           ?? null,
+      isrc:              r.isrc            ?? null,
+      odesli_key:        r.odesliKey       ?? null,
+      thumbnail_url:     r.thumbnailUrl    ?? null,
+      spotify_url:       r.spotifyUrl      ?? null,
+      apple_music_url:   r.appleMusicUrl   ?? null,
+      youtube_music_url: r.youtubeMusicUrl ?? null,
+      tidal_url:         r.tidalUrl        ?? null,
+      deezer_url:        r.deezerUrl       ?? null,
+      amazon_music_url:  r.amazonMusicUrl  ?? null,
+      soundcloud_url:    r.soundcloudUrl   ?? null,
+      songlink_url:      r.songlinkUrl     ?? null,
+      note:              r.note            ?? null,
+      listed:            r.listed === false ? 0 : 1,
+      instance_url:      r.instanceUrl     ?? null,
+      created_at:        r.createdAt       ?? new Date().toISOString(),
+    });
+    count++;
+  }
+  return count;
+}
+
+async function backfillMissingUsers() {
+  const users = db.prepare(`
+    SELECT r.did FROM registered_users r
+    WHERE NOT EXISTS (SELECT 1 FROM songs s WHERE s.actor_did = r.did)
+  `).all();
+
+  if (users.length === 0) return;
+
+  console.log(`[backfill] ${users.length} user(s) with no indexed songs — fetching up to ${BACKFILL_LIMIT} each`);
+
+  for (const { did } of users) {
+    try {
+      const count = await backfillUser(did);
+      if (count > 0) console.log(`[backfill] ${did}: inserted ${count} song(s)`);
+    } catch (e) {
+      console.warn(`[backfill] ${did}: failed — ${e.message}`);
+    }
+    await new Promise(r => setTimeout(r, BACKFILL_DELAY));
+  }
+
+  console.log('[backfill] done');
+}
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 const { seq } = getCursor.get();
@@ -265,6 +364,8 @@ const firehose = new Firehose({
     console.error('[indexer] firehose error:', err);
   },
 });
+
+await backfillMissingUsers();
 
 firehose.start();
 console.log('[indexer] firehose connected');
