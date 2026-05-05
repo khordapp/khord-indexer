@@ -352,27 +352,28 @@ async function resolveHandles() {
   console.log(`[handles] resolved ${resolved}/${actors.length}`);
 }
 
-async function backfillMissingUsers() {
-  const users = db.prepare(`
-    SELECT r.did FROM registered_users r
-    WHERE NOT EXISTS (SELECT 1 FROM songs s WHERE s.actor_did = r.did)
-  `).all();
+async function backfillAllUsers() {
+  const users = db.prepare(`SELECT did FROM registered_users`).all();
 
   if (users.length === 0) return;
 
-  console.log(`[backfill] ${users.length} user(s) with no indexed songs — fetching up to ${BACKFILL_LIMIT} each`);
+  console.log(`[backfill] ${users.length} registered user(s) — fetching up to ${BACKFILL_LIMIT} recent songs each`);
 
+  let total = 0;
   for (const { did } of users) {
     try {
       const count = await backfillUser(did);
-      if (count > 0) console.log(`[backfill] ${did}: inserted ${count} song(s)`);
+      if (count > 0) {
+        console.log(`[backfill] ${did}: upserted ${count} song(s)`);
+        total += count;
+      }
     } catch (e) {
       console.warn(`[backfill] ${did}: failed — ${e.message}`);
     }
     await new Promise(r => setTimeout(r, BACKFILL_DELAY));
   }
 
-  console.log('[backfill] done');
+  console.log(`[backfill] done — ${total} song(s) upserted across ${users.length} user(s)`);
 }
 
 // ── Start ─────────────────────────────────────────────────────────────────────
@@ -400,7 +401,7 @@ const firehose = new Firehose({
 });
 
 await resolveHandles();
-await backfillMissingUsers();
+await backfillAllUsers();
 
 firehose.start();
 console.log('[indexer] firehose connected');
