@@ -2,6 +2,9 @@ name: Publish Docker image
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
 
 env:
   REGISTRY: ghcr.io
@@ -12,7 +15,7 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
 
     steps:
@@ -29,8 +32,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set build number
-        run: echo "BUILD=$(git rev-list --count HEAD)" >> $GITHUB_ENV
+      - name: Set version
+        run: |
+          BASE=$(cat version.txt 2>/dev/null | tr -d '[:space:]')
+          if [ -z "$BASE" ]; then BASE="0.0.0"; fi
+          echo "VERSION=${BASE}.$(git rev-list --count HEAD)" >> $GITHUB_ENV
 
       - name: Extract metadata
         id: meta
@@ -42,7 +48,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=build-${{ env.BUILD }}
+            type=raw,value=${{ env.VERSION }}
 
       - name: Build and push image
         uses: docker/build-push-action@v6
@@ -53,3 +59,11 @@ jobs:
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Tag release
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag v${{ env.VERSION }}
+          git push origin v${{ env.VERSION }}
