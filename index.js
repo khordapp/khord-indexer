@@ -286,14 +286,14 @@ async function resolvePds(did) {
 
 async function backfillUser(did) {
   const pds = await resolvePds(did);
-  if (!pds) return 0;
+  if (!pds) { console.warn(`[backfill] ${did}: could not resolve PDS`); return 0; }
 
   const url = `${pds}/xrpc/com.atproto.repo.listRecords?repo=${encodeURIComponent(did)}&collection=app.khord.song&limit=${BACKFILL_LIMIT}`;
   const res = await fetch(url);
-  if (!res.ok) return 0;
+  if (!res.ok) { console.warn(`[backfill] ${did}: listRecords HTTP ${res.status}`); return 0; }
 
   const { records } = await res.json();
-  if (!records?.length) return 0;
+  if (!records?.length) { console.log(`[backfill] ${did}: no songs on PDS`); return 0; }
 
   let count = 0;
   for (const rec of records) {
