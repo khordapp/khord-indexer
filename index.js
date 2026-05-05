@@ -384,14 +384,10 @@ const firehose = new Firehose({
   relay: RELAY,
   cursor: seq > 0 ? seq : undefined,
   unauthenticatedCommits: true,
+  excludeIdentity: true,
   excludeAccount: true,
   excludeSync: true,
   async handleEvent(evt) {
-    // Identity events carry the current handle — update actors in real time
-    if (!evt.collection) {
-      if (evt.handle) setActorHandle.run({ handle: evt.handle, did: evt.did });
-      return;
-    }
     try {
       handleEvent(evt);
     } catch (e) {
@@ -408,6 +404,9 @@ await backfillMissingUsers();
 
 firehose.start();
 console.log('[indexer] firehose connected');
+
+// Re-run handle resolution every 6 hours to pick up handle changes
+setInterval(resolveHandles, 6 * 60 * 60 * 1000);
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
