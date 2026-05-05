@@ -87,6 +87,10 @@ const upsertActor = db.prepare(`
   ON CONFLICT(did) DO NOTHING
 `);
 
+const setActorHandle = db.prepare(`
+  UPDATE actors SET handle = @handle WHERE did = @did
+`);
+
 const upsertSong = db.prepare(`
   INSERT INTO songs(
     uri, cid, actor_did, title, artist, album, isrc, odesli_key,
@@ -245,33 +249,39 @@ function handleEvent(evt) {
   if (seq != null) setCursor.run({ seq });
 }
 
-// ── PDS backfill ──────────────────────────────────────────────────────────────
-// On startup, fetch up to 50 recent songs from the PDS of any registered user
-// who has zero songs in the DB. Covers historical data outside the firehose
-// retention window. No-op on subsequent startups once users are indexed.
+// ── PDS backfill + handle resolution ─────────────────────────────────────────
+// On startup:
+//   resolveHandles()      — fills actors.handle for every DID that has none.
+//                           Handles aren't in firehose commit events, so this
+//                           is the only way to populate them.
+//   backfillMissingUsers() — fetches up to 50 recent songs from the PDS of any
+//                           registered user with no songs in the DB. Covers
+//                           history outside the firehose retention window.
 
 const BACKFILL_LIMIT = 50;
-const BACKFILL_DELAY = 200; // ms between users
+const BACKFILL_DELAY = 200; // ms between outbound requests
 
-async function resolvePds(did) {
+async function resolveDidDoc(did) {
   try {
     if (did.startsWith('did:plc:')) {
       const res = await fetch(`https://plc.directory/${did}`);
       if (!res.ok) return null;
-      const doc = await res.json();
-      const svc = doc.service?.find(s => s.type === 'AtprotoPersonalDataServer');
-      return svc?.serviceEndpoint ?? null;
+      return await res.json();
     }
     if (did.startsWith('did:web:')) {
       const domain = did.slice('did:web:'.length);
       const res = await fetch(`https://${domain}/.well-known/did.json`);
       if (!res.ok) return null;
-      const doc = await res.json();
-      const svc = doc.service?.find(s => s.type === 'AtprotoPersonalDataServer');
-      return svc?.serviceEndpoint ?? null;
+      return await res.json();
     }
-  } catch { /* unreachable PDS — skip */ }
+  } catch { /* unreachable */ }
   return null;
+}
+
+async function resolvePds(did) {
+  const doc = await resolveDidDoc(did);
+  const svc = doc?.service?.find(s => s.type === 'AtprotoPersonalDataServer');
+  return svc?.serviceEndpoint ?? null;
 }
 
 async function backfillUser(did) {
@@ -317,6 +327,31 @@ async function backfillUser(did) {
   return count;
 }
 
+async function resolveHandles() {
+  const actors = db.prepare(`SELECT did FROM actors WHERE handle IS NULL`).all();
+  if (actors.length === 0) return;
+
+  console.log(`[handles] ${actors.length} actor(s) missing handle — resolving…`);
+  let resolved = 0;
+
+  for (const { did } of actors) {
+    try {
+      const doc = await resolveDidDoc(did);
+      const aka = doc?.alsoKnownAs?.[0];
+      const handle = aka?.startsWith('at://') ? aka.slice(5) : null;
+      if (handle) {
+        setActorHandle.run({ handle, did });
+        resolved++;
+      }
+    } catch (e) {
+      console.warn(`[handles] ${did}: ${e.message}`);
+    }
+    await new Promise(r => setTimeout(r, BACKFILL_DELAY));
+  }
+
+  console.log(`[handles] resolved ${resolved}/${actors.length}`);
+}
+
 async function backfillMissingUsers() {
   const users = db.prepare(`
     SELECT r.did FROM registered_users r
@@ -349,11 +384,14 @@ const firehose = new Firehose({
   relay: RELAY,
   cursor: seq > 0 ? seq : undefined,
   unauthenticatedCommits: true,
-  excludeIdentity: true,
   excludeAccount: true,
   excludeSync: true,
   async handleEvent(evt) {
-    if (!evt.collection) return; // skip identity/account/sync events
+    // Identity events carry the current handle — update actors in real time
+    if (!evt.collection) {
+      if (evt.handle) setActorHandle.run({ handle: evt.handle, did: evt.did });
+      return;
+    }
     try {
       handleEvent(evt);
     } catch (e) {
@@ -365,6 +403,7 @@ const firehose = new Firehose({
   },
 });
 
+await resolveHandles();
 await backfillMissingUsers();
 
 firehose.start();
