@@ -10,7 +10,8 @@ import { Firehose } from '@atproto/sync';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const DB_PATH  = process.env.INDEXER_DB_PATH ?? join(__dirname, '../data/khord.db');
+const _dbName  = process.env.INDEXER_DB_NAME;
+const DB_PATH  = _dbName ? `/data/${_dbName}` : (process.env.INDEXER_DB_PATH ?? join(__dirname, '../data/khord.db'));
 const RELAY    = process.env.FIREHOSE_RELAY   ?? 'wss://bsky.network';
 
 const SONG_NSID     = 'app.khord.song';

@@ -72,7 +72,8 @@ Node.js 22 or later recommended. `better-sqlite3` requires native build tools (`
 
 | Variable | Default | Description |
 |---|---|---|
-| `INDEXER_DB_PATH` | `/data/khord.db` | Path to the SQLite database file |
+| `INDEXER_DB_NAME` | — | **Unraid** — database file name only (e.g. `khord.db`); path is constructed as `/data/{name}`. Use this instead of `INDEXER_DB_PATH` on Unraid. |
+| `INDEXER_DB_PATH` | `/data/khord.db` | **Docker Compose** — full path to the SQLite database file. Ignored when `INDEXER_DB_NAME` is set. |
 | `FIREHOSE_RELAY` | `wss://bsky.network` | AT Protocol firehose relay URL |
 
 ## License
